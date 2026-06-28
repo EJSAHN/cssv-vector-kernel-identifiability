@@ -1,0 +1,8 @@
+treatment,year,n1_rows1_5_infected_1A,n1_rows1_5_not_severe_1A,susceptible_rows6_8_infected_1A,susceptible_rows6_8_not_severe_1A
+T1,1,0,600,0,75
+T1,2,1,599,0,75
+T1,3,130,470,6,69
+T1,4,137,463,6,69
+T1,5,151,449,7,68
+T1,6,177,423,22,53
+T1,7,202,398,28,47

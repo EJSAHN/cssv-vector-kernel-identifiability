@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+title: "cssv-vector-kernel-identifiability"
+message: "If you use this repository, please cite the archived repository DOI and the associated article when available."
+type: software
+authors:
+  - family-names: Ahn
+    given-names: Ezekiel
+  - family-names: Park
+    given-names: Sunchung
+  - family-names: Baek
+    given-names: Insuck
+  - family-names: Kim
+    given-names: Moon S.
+  - family-names: Meinhardt
+    given-names: Lyndel W.
+version: 1.0.0
+license: MIT
+repository-code: "https://github.com/EJSAHN/cssv-vector-kernel-identifiability"

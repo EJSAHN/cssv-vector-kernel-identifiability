@@ -1,0 +1,5 @@
+file,source,source_doi,license_or_reuse_note,notes
+treatment_T1_table1_transcribed.csv,Agusto et al. 2024 PLOS ONE Table 1,10.1371/journal.pone.0294579,Source article published by PLOS under CC BY; cite original source,Manual transcription of aggregate T1 counts.
+treatment_T2_table2_transcribed.csv,Agusto et al. 2024 PLOS ONE Table 2,10.1371/journal.pone.0294579,Source article published by PLOS under CC BY; cite original source,Manual transcription of aggregate T2 counts.
+treatment_T3_table3_transcribed.csv,Agusto et al. 2024 PLOS ONE Table 3,10.1371/journal.pone.0294579,Source article published by PLOS under CC BY; cite original source,Manual transcription of aggregate T3 counts.
+treatment_design_expected_counts.csv,Reconstructed 19 by 19 nested-square plot design,NA,Reconstructed from published trial description; cite Domfeh et al. 2019 and Agusto et al. 2024,Expected monitored tree counts under three replicate plots.
