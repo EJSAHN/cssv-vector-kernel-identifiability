@@ -13,6 +13,6 @@ authors:
     given-names: Moon S.
   - family-names: Meinhardt
     given-names: Lyndel W.
-version: 1.0.0
+version: 1.1.1
 license: MIT
 repository-code: "https://github.com/EJSAHN/cssv-vector-kernel-identifiability"

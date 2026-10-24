@@ -17,6 +17,10 @@ def main(argv=None) -> int:
     parser.add_argument("--n-sim", type=int, default=200)
     parser.add_argument("--seed", type=int, default=20260626)
     parser.add_argument("--skip-simulation", action="store_true")
+    parser.add_argument("--year-effects", default=None,
+                        help="CSV of fixed year effects (columns: year, eta_cloglog) used to generate simulated epidemics")
+    parser.add_argument("--check-optimizer", action="store_true",
+                        help="Refit the empirical model ladder and every simulated candidate model with tighter optimisation and compare the results")
     args = parser.parse_args(argv)
 
     root = Path(args.project_root).resolve()
@@ -28,9 +32,11 @@ def main(argv=None) -> int:
     scales = parse_scales(args.scales)
     true_scales = parse_scales(args.true_scales)
 
-    tables = run_empirical_analysis(root, scales, denominator_mode=args.denominator_mode)
+    tables = run_empirical_analysis(root, scales, denominator_mode=args.denominator_mode, check_optimizer=args.check_optimizer)
     if not args.skip_simulation:
-        tables.update(run_simulation_study(root, scales, true_scales, n_sim=args.n_sim, seed=args.seed))
+        tables.update(run_simulation_study(root, scales, true_scales, n_sim=args.n_sim, seed=args.seed,
+                                           check_optimizer=args.check_optimizer,
+                                           year_effects_file=(root / args.year_effects) if args.year_effects else None))
 
     write_tables(tables, output_dir)
     write_excel_workbook(tables, output_dir / "cssv_analysis_tables.xlsx")

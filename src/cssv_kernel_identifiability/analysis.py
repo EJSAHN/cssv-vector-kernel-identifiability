@@ -12,6 +12,7 @@ from .prepare_data import build_processed_data
 from .data import load_all, load_zone_timeseries, load_geometry, load_expected_counts, make_interval_data, validate_zone_timeseries, zone_final_summary, parse_ring_range, normalize_denominator_mode
 from .kernel import attach_exposure, kernel_values
 from .models import fit_hazard_model, fit_and_score, build_design, cloglog_inv, binomial_logpmf, beta_binomial_logpmf, prediction_frame
+from .optimizer_check import check_zone_profile, check_tree_profile, summarize_optimizer_check, check_empirical_fits
 
 DEFAULT_SCALES = [2.4, 3.6, 4.8, 7.2, 9.6, 14.4, 19.2, 28.8]
 EPS = 1e-10
@@ -252,7 +253,8 @@ def constrained_positive_pressure_profile(interval: pd.DataFrame, geometry: pd.D
     return pd.DataFrame(rows).sort_values(["family", "aicc"], na_position="last")
 
 
-def run_empirical_analysis(project_root: Path, scales: list[float], denominator_mode: str = "reported") -> dict[str, pd.DataFrame]:
+def run_empirical_analysis(project_root: Path, scales: list[float], denominator_mode: str = "reported",
+                           check_optimizer: bool = False) -> dict[str, pd.DataFrame]:
     project_root = Path(project_root)
     denominator_mode = normalize_denominator_mode(denominator_mode)
     build_processed_data(project_root)
@@ -282,6 +284,8 @@ def run_empirical_analysis(project_root: Path, scales: list[float], denominator_
     results[f"leave_one_zone_cv_{mode}"] = cv
     results[f"leave_one_zone_cv_summary_{mode}"] = cv_summary
     results[f"constrained_positive_pressure_{mode}"] = constrained_positive_pressure_profile(mode_res["interval_data"], geometry, scales)
+    if check_optimizer:
+        results[f"optimizer_check_empirical_{mode}"] = check_empirical_fits(mode_res["interval_data"], geometry, scales)
     return results
 
 
@@ -465,10 +469,18 @@ def fit_tree_grouped_scale_profile(tree_year: pd.DataFrame, panel: pd.DataFrame,
 
 
 def summarize_scale_profile(profile: pd.DataFrame, true_scale: float, sim_id: int) -> dict[str, object]:
-    ok = profile.loc[profile.get("aicc", pd.Series(dtype=float)).notna()].copy()
+    valid = pd.Series(True, index=profile.index)
+    for column in ("aicc", "aic", "candidate_scale_m", "pressure_coef", "N1_coef"):
+        if column not in profile.columns:
+            valid[:] = False
+            break
+        valid &= np.isfinite(pd.to_numeric(profile[column], errors="coerce"))
+    ok = profile.loc[valid].copy()
     unit = str(profile["analysis_unit"].dropna().iloc[0]) if "analysis_unit" in profile and profile["analysis_unit"].notna().any() else "unknown"
-    if ok.empty:
-        return {"sim_id": sim_id, "true_scale_m": true_scale, "analysis_unit": unit, "fit_success": False}
+    n_fitted = int(len(ok))
+    if n_fitted == 0 or n_fitted < len(profile):
+        return {"sim_id": sim_id, "true_scale_m": true_scale, "analysis_unit": unit, "profile_completed": False,
+                "n_candidate_scales_fitted": n_fitted}
     ok = ok.sort_values(["aicc", "aic", "candidate_scale_m"])
     best = ok.iloc[0]
     min_aicc = float(ok["aicc"].min())
@@ -477,7 +489,9 @@ def summarize_scale_profile(profile: pd.DataFrame, true_scale: float, sim_id: in
         "sim_id": sim_id,
         "true_scale_m": float(true_scale),
         "analysis_unit": unit,
-        "fit_success": True,
+        "profile_completed": True,
+        "n_candidate_scales_fitted": n_fitted,
+        "selected_optimizer_success": bool(best["success"]),
         "selected_scale_m": float(best["candidate_scale_m"]),
         "selected_pressure_coef": float(best["pressure_coef"]),
         "selected_N1_coef": float(best["N1_coef"]),
@@ -493,12 +507,13 @@ def summarize_scale_profile(profile: pd.DataFrame, true_scale: float, sim_id: in
 def aggregate_recovery(rep_results: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for (true_scale, unit), g in rep_results.groupby(["true_scale_m", "analysis_unit"], sort=True):
-        ok = g.loc[g["fit_success"].astype(bool)].copy()
+        ok = g.loc[g["profile_completed"].astype(bool)].copy()
         rows.append({
             "true_scale_m": true_scale,
             "analysis_unit": unit,
             "n_sims_requested": int(len(g)),
-            "n_successful_fits": int(len(ok)),
+            "n_replicates_analysed": int(len(ok)),
+            "n_selected_fits_with_optimizer_success": int(ok["selected_optimizer_success"].sum()) if len(ok) else 0,
             "exact_scale_recovery_rate": float(ok["exact_scale_recovered"].mean()) if len(ok) else np.nan,
             "true_scale_in_delta_aicc_2_rate": float(ok["true_scale_in_delta_aicc_2_set"].mean()) if len(ok) else np.nan,
             "positive_pressure_rate": float(ok["selected_pressure_positive"].mean()) if len(ok) else np.nan,
@@ -511,28 +526,37 @@ def aggregate_recovery(rep_results: pd.DataFrame) -> pd.DataFrame:
 
 
 def scale_selection_counts(rep_results: pd.DataFrame) -> pd.DataFrame:
-    ok = rep_results.loc[rep_results["fit_success"].astype(bool)].copy()
+    ok = rep_results.loc[rep_results["profile_completed"].astype(bool)].copy()
+    if ok.empty:
+        return pd.DataFrame(columns=["true_scale_m", "analysis_unit", "selected_scale_m", "n_selected",
+                                     "n_replicates_analysed", "selection_fraction"])
     counts = ok.groupby(["true_scale_m", "analysis_unit", "selected_scale_m"], as_index=False).size().rename(columns={"size": "n_selected"})
-    denom = ok.groupby(["true_scale_m", "analysis_unit"], as_index=False).size().rename(columns={"size": "n_successful"})
+    denom = ok.groupby(["true_scale_m", "analysis_unit"], as_index=False).size().rename(columns={"size": "n_replicates_analysed"})
     out = counts.merge(denom, on=["true_scale_m", "analysis_unit"], how="left")
-    out["selection_fraction"] = out["n_selected"] / out["n_successful"]
+    out["selection_fraction"] = out["n_selected"] / out["n_replicates_analysed"]
     return out.sort_values(["true_scale_m", "analysis_unit", "selected_scale_m"])
 
 
 def run_simulation_study(project_root: Path, scales: list[float], true_scales: list[float], n_sim: int, seed: int,
-                         n1_log_hr: float = -0.40, pressure_coef: float = 0.30, frailty_sd: float = 0.30) -> dict[str, pd.DataFrame]:
+                         n1_log_hr: float = -0.40, pressure_coef: float = 0.30, frailty_sd: float = 0.30,
+                         check_optimizer: bool = False, year_effects_file: Path | None = None) -> dict[str, pd.DataFrame]:
     project_root = Path(project_root)
     build_processed_data(project_root)
     long_df = load_zone_timeseries(project_root)
     geometry = load_geometry(project_root)
     expected = load_expected_counts(project_root)
     interval = make_interval_data(long_df, expected, denominator_mode="expected_geometry")
-    year_eta = fit_calibration_year_effects(interval)
+    if year_effects_file is not None:
+        ye = pd.read_csv(year_effects_file)
+        year_eta = {int(y): float(e) for y, e in zip(ye["year"], ye["eta_cloglog"])}
+    else:
+        year_eta = fit_calibration_year_effects(interval)
     panel = build_target_tree_panel(long_df, geometry)
     panel = add_pressure_columns(panel, geometry, sorted(set(scales + true_scales)))
     rng = np.random.default_rng(seed)
     rep_rows = []
     event_rows = []
+    check_rows = []
     for true_scale in true_scales:
         for sim_id in range(1, n_sim + 1):
             if sim_id == 1 or sim_id % max(1, n_sim // 5) == 0:
@@ -545,6 +569,11 @@ def run_simulation_study(project_root: Path, scales: list[float], true_scales: l
             tp = fit_tree_grouped_scale_profile(tree_year, panel, scales)
             rep_rows.append(summarize_scale_profile(zp, true_scale, sim_id))
             rep_rows.append(summarize_scale_profile(tp, true_scale, sim_id))
+            if check_optimizer:
+                for row in (check_zone_profile(sim_zone, geometry, scales, true_scale),
+                            check_tree_profile(tree_year, panel, scales, true_scale, tree_grouped_design_for_scale)):
+                    row["sim_id"] = sim_id
+                    check_rows.append(row)
     rep = pd.DataFrame(rep_rows)
     summary = aggregate_recovery(rep)
     counts = scale_selection_counts(rep)
@@ -559,11 +588,18 @@ def run_simulation_study(project_root: Path, scales: list[float], true_scales: l
         "pressure_hazard_ratio_per_1sd_true": exp_clip(pressure_coef),
         "frailty_sd_cloglog_scale": frailty_sd,
         "n_target_trees": int(panel.shape[0]),
+        "year_effects_source": Path(year_effects_file).name if year_effects_file is not None else "calibrated in this run",
+        "year_eta_calibration": json.dumps({int(k): float(v) for k, v in year_eta.items()}),
     }])
-    return {
+    out = {
         "simulation_replicate_results": rep,
         "design_power_recovery_summary": summary,
         "design_power_scale_selection_counts": counts,
         "design_power_simulated_epidemic_sizes": pd.DataFrame(event_rows),
         "design_power_settings": settings,
     }
+    if check_optimizer:
+        checks = pd.DataFrame(check_rows)
+        out["optimizer_check_replicates"] = checks
+        out["optimizer_check_summary"] = summarize_optimizer_check(checks)
+    return out
